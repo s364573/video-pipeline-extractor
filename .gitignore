@@ -1,0 +1,16 @@
+# Ignore the participant data folder entirely
+participant/
+
+# Ignore all CSV and MP4 files everywhere in the project
+*.csv
+*.mp4
+*.wav
+
+# If you have specific folders for features or videos, ignore them too
+**/features/
+**/videos/
+
+# Ignore Python environment and cache
+venv/
+__pycache__/
+.DS_Store
