@@ -12,5 +12,6 @@ participant/
 
 # Ignore Python environment and cache
 venv/
+venv311/
 __pycache__/
 .DS_Store
