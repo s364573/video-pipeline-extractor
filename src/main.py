@@ -8,6 +8,7 @@ from data.trials import build_trials_with_questions, build_metadata
 from pipeline.sync import compute_sync_offset
 from pipeline.clip import clip_trials
 from pipeline.transcribe import transcribe_labels
+import whisper
 
 
 RAW_ROOT = Path().home() / "01_MASTER" / "Data" / "raw"
@@ -227,7 +228,7 @@ if __name__ == "__main__":
         clip_trials(block, labels, OUTPUT)
 
     if RUN["transcribe"]:
-        model = load_model("medium")
+        model = whisper.load_model("medium")
         labels = transcribe_labels(labels, base_path, model)
         save_json(labels, base_path / "labels.json")
 
