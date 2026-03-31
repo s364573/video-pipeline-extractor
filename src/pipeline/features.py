@@ -2,12 +2,19 @@ from pathlib import Path
 import subprocess
 import pandas as pd
 from feat import Detector
-
+import torch
+from utils.config_loader import load_config, get_device
+DEVICE = get_device()
+_cfg = load_config()
+FFMPEG = _cfg["ffmpeg"]
+import os
+os.environ["PATH"] = str(Path(FFMPEG).parent) + os.pathsep + os.environ["PATH"]
 # -------------------------
 # CONFIG
 # -------------------------
 TARGET_WIDTH = 640
-SKIP_FRAMES = 2
+SKIP_FRAMES = 5
+BATCH_SIZE = 64
 
 CONFIG_TAG = f"pyfeat_w{TARGET_WIDTH}_fps50_skip{SKIP_FRAMES}"
 CACHE_TAG = f"downscaled_w{TARGET_WIDTH}"
@@ -25,8 +32,13 @@ def get_detector():
         _detector = Detector(
             face_model="retinaface",
             landmark_model="mobilefacenet",
-            au_model="xgb"
+            au_model="xgb",
+            device=DEVICE
         )
+        print(f"[INIT] Device: {DEVICE}")
+        print(f"[INIT] CUDA available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"[INIT] GPU: {torch.cuda.get_device_name(0)}")
     return _detector
 
 
@@ -43,7 +55,7 @@ def downscale(video_path: Path, base_path: Path) -> Path:
         return cache_path
 
     cmd = [
-        "ffmpeg",
+        FFMPEG,
         "-y",
         "-i", str(video_path),
         "-vf", f"scale={TARGET_WIDTH}:-1",
@@ -82,7 +94,7 @@ def process_clip(video_path: Path, base_path: Path):
     print(f"[FEAT] Processing {video_path.name}")
 
     try:
-        result = detector.detect_video(str(video_ds))
+        result = detector.detect_video(str(video_ds),batch_size=BATCH_SIZE, skip_frames=SKIP_FRAMES)  # ← let py-feat handle skipping)
     except Exception as e:
         print(f"[ERROR] {video_path.name}: {e}")
         return
@@ -91,7 +103,7 @@ def process_clip(video_path: Path, base_path: Path):
         print(f"[WARN] No features: {video_path.name}")
         return
 
-    df = result.to_pandas()
+    df = pd.DataFrame(result)
 
     # -------------------------
     # ADD TIME / FRAME
@@ -103,12 +115,7 @@ def process_clip(video_path: Path, base_path: Path):
     # fallback: assume 50 fps input
     fps = 50
     df["time"] = df["frame"] / fps
-
-    # -------------------------
-    # APPLY FRAME SKIP (AFTER)
-    # -------------------------
-    if SKIP_FRAMES > 1:
-        df = df.iloc[::SKIP_FRAMES].copy()
+    
 
     df["config"] = CONFIG_TAG
 
@@ -124,13 +131,29 @@ def process_clip(video_path: Path, base_path: Path):
 # -------------------------
 # MAIN ENTRY
 # -------------------------
-def extract_features(base_path: Path):
+def extract_features(base_path: Path, clip_types=None):
+    """
+    clip_types: list of folders to process, in order.
+    Options: ["stimuli"], ["questions"], ["stimuli", "questions"]
+    Default: stimuli only (most important for AU extraction)
+    """
+    if clip_types is None:
+        clip_types = ["stimuli"]  # default: stimuli only
+
     print("[FEATURES] Starting extraction...")
 
-    videos = list(base_path.rglob("*.mp4"))
-    print(f"[FEATURES] Found {len(videos)} clips")
+    videos = []
+    for clip_type in clip_types:
+        folder = base_path / clip_type
+        if not folder.exists():
+            print(f"[WARN] Folder not found: {folder}")
+            continue
+        found = list(folder.glob("*.mp4"))
+        found = [v for v in found if "cache" not in str(v)]
+        print(f"[INFO] {clip_type}: {len(found)} clips")
+        videos.extend(sorted(found))
 
+    print(f"[FEATURES] Total: {len(videos)} clips")
     for v in videos:
         process_clip(v, base_path)
-
     print("[FEATURES] Done.")

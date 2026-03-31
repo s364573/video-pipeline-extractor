@@ -3,6 +3,14 @@ import tempfile
 from pathlib import Path
 import json
 import whisper
+from utils.config_loader import load_config, get_device
+DEVICE = get_device()
+import os
+_cfg = load_config()
+FFMPEG = _cfg["ffmpeg"]
+
+# Add ffmpeg directory to PATH so whisper can find it internally
+os.environ["PATH"] = str(Path(FFMPEG).parent) + os.pathsep + os.environ["PATH"]
 
 # -----------------------------
 # CONFIG
@@ -30,7 +38,7 @@ def preprocess_audio(input_path: Path) -> Path:
     tmp_path = Path(tmp.name)
 
     cmd = [
-        "ffmpeg",
+        FFMPEG,
         "-y",
         "-i", str(input_path),
         "-af",
@@ -40,7 +48,17 @@ def preprocess_audio(input_path: Path) -> Path:
         str(tmp_path)
     ]
 
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    result = subprocess.run(
+    cmd,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.PIPE,
+    text=True
+    )
+    print(f"[DEBUG FFMPEG] returncode={result.returncode}")
+    print(f"[DEBUG TEMP] path={tmp_path}, exists={tmp_path.exists()}, size={tmp_path.stat().st_size if tmp_path.exists() else 0}")
+    return tmp_path
+
+    
     return tmp_path
 
 
@@ -70,7 +88,7 @@ def transcribe_file(model, audio_path: Path):
         no_speech_threshold=0.3,
 
         initial_prompt="Kort svar på norsk. Ett ord eller kort setning.",
-        fp16=False
+        fp16 = DEVICE == "cuda" 
     )
 
     segments = result.get("segments", []) or []
@@ -140,6 +158,11 @@ def transcribe_labels(labels, base_path: Path, model):
             continue
 
         clip_path = base_path / clip["file"]
+        if not clip_path.exists():
+            clip_path = clip_path.with_suffix(".MP4")  # fallback for existing clips
+        if not clip_path.exists():
+            print(f"[WARN] Missing: {clip_path}")
+            continue
 
         if not clip_path.exists():
             print(f"[WARN] Missing: {clip_path}")
@@ -176,7 +199,7 @@ def transcribe_labels(labels, base_path: Path, model):
 # ENTRY
 # -----------------------------
 def main():
-    model = whisper.load_model(MODEL_SIZE)
+    model = whisper.load_model(MODEL_SIZE, device=DEVICE)
 
     base_path = Path("PATH_TO_CLIPS")
 

@@ -4,7 +4,9 @@ import tempfile
 from pathlib import Path
 from scipy.io import wavfile
 from scipy.signal import spectrogram
-
+from utils.config_loader import load_config
+_cfg = load_config()
+FFMPEG = _cfg["ffmpeg"]
 
 DEFAULT_TONE_DURATION = 1.0
 SEARCH_WINDOW_START = 0.0
@@ -32,7 +34,7 @@ def extract_audio_window_to_wav(
     tmp_path = Path(tmp.name)
 
     cmd = [
-        "ffmpeg",
+        FFMPEG,
         "-y",
         "-hide_banner",
         "-loglevel", "error",

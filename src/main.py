@@ -1,20 +1,42 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent))  # adds src/ to path
 from pathlib import Path
 import json
 import copy
-import cv2
+import subprocess
+import sys
 from data.loader import Session
 from data.parser import get_event_pairs
 from data.trials import build_trials_with_questions, build_metadata
 from pipeline.sync import compute_sync_offset
 from pipeline.clip import clip_trials
 from pipeline.transcribe import transcribe_labels
+from utils.config_loader import load_config, get_device      # ← from utils/
 import whisper
 
+# -------------------------
+# PATHS FROM CONFIG
+# -------------------------
+cfg = load_config()
+RAW_ROOT = cfg["raw_root"]
+OUTPUT   = cfg["output_root"]
 
-RAW_ROOT = Path().home() / "01_MASTER" / "Data" / "raw"
-OUTPUT = Path().home() / "01_MASTER" / "Data" / "processed"
-
-
+FEAT_PYTHON          = cfg["project_root"].parent / "venv_feat" / "Scripts" / "python.exe"
+RUN_FEATURES_SCRIPT  = cfg["project_root"] / "run_features.py"
+DEVICE = get_device()
+# -------------------------
+# SUBPROCESS (one definition)
+# -------------------------
+def run_features_subprocess(participant_id, block_id):
+    print("[main] Handing off to venv_feat...")
+    result = subprocess.run(
+        [str(FEAT_PYTHON), "-u", str(RUN_FEATURES_SCRIPT), participant_id, block_id],
+    )
+    if result.returncode != 0:
+        print("[ERROR] Feature extraction failed")
+        sys.exit(1)
+    print("[main] Feature extraction complete.")
 # -------------------------
 # VALIDATION
 # -------------------------
@@ -168,40 +190,23 @@ def run_block(participant_id, block_id):
 # -------------------------
 
 if __name__ == "__main__":
-
-    # -----------------
-    # CONFIG
-    # -----------------
     participant_id = "AAAD"
-    block_id = "B00"
+    block_id = "B03"
 
     RUN = {
-        "sync": False,
-        "clip": False,
-        "transcribe": False,
-        "features": True,   # 🔴 ONLY THIS ON NOW
+        "sync": True,
+        "clip": True,
+        "transcribe": True,
+        "features": True,
     }
 
     base_path = OUTPUT / participant_id / block_id
 
-    # -----------------
-    # FEATURE ONLY MODE
-    # -----------------
-    if RUN["features"] and not any([
-        RUN["sync"],
-        RUN["clip"],
-        RUN["transcribe"]
-    ]):
-        from pipeline.features import extract_features
-
-        extract_features(base_path)
+    if RUN["features"] and not any([RUN["sync"], RUN["clip"], RUN["transcribe"]]):
+        run_features_subprocess(participant_id, block_id)   # ← pass IDs not path
         exit()
 
-    # -----------------
-    # FULL PIPELINE (normal)
-    # -----------------
     block, events, trials = run_block(participant_id, block_id)
-
     validate_trials(trials)
 
     sync_info = compute_sync_offset(block, events)
@@ -209,8 +214,6 @@ if __name__ == "__main__":
 
     synced_trials = apply_offset(trials, offset)
     validate_trials(synced_trials)
-
-    base_path = OUTPUT / participant_id / block_id
 
     save_json(sync_info, base_path / "sync.json")
     save_json(synced_trials, base_path / "trials.json")
@@ -221,7 +224,6 @@ if __name__ == "__main__":
 
     labels = build_clip_labels(block, synced_trials)
     validate_labels(labels)
-
     save_json(labels, base_path / "labels.json")
 
     if RUN["clip"]:
@@ -233,9 +235,7 @@ if __name__ == "__main__":
         save_json(labels, base_path / "labels.json")
 
     if RUN["features"]:
-        from pipeline.features import extract_features
-        extract_features(base_path)
+        run_features_subprocess(participant_id, block_id)   # ← pass IDs not path
 
     validate_output_structure(base_path)
-
     print("Pipeline complete.")

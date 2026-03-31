@@ -1,6 +1,8 @@
 import subprocess
 from pathlib import Path
-
+from utils.config_loader import load_config
+_cfg = load_config()
+FFMPEG = _cfg["ffmpeg"]
 
 def clip_video(input_path: Path, start: float, end: float, output_path: Path):
     duration = end - start
@@ -12,7 +14,7 @@ def clip_video(input_path: Path, start: float, end: float, output_path: Path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "ffmpeg",
+        FFMPEG,
         "-y",
         "-ss", f"{start:.3f}",
         "-i", str(input_path),
