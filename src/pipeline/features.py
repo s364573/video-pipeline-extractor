@@ -63,16 +63,13 @@ def downscale(video_path: Path, base_path: Path) -> Path:
     if cache_path.exists():
         return cache_path
 
-    if DEVICE == "cuda":
-        codec_args = ["-c:v", "h264_nvenc", "-preset", "fast", "-cq", "23"]
-    else:
-        codec_args = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
-
     cmd = [
         FFMPEG, "-y",
         "-i", str(video_path),
         "-vf", f"scale={TARGET_WIDTH}:-1",
-        *codec_args,
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "23",
         "-an",
         str(cache_path)
     ]
