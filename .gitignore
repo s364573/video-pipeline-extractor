@@ -1,17 +1,42 @@
-# Ignore the participant data folder entirely
-participant/
+# Python
+__pycache__/
+*.pyc
 
-# Ignore all CSV and MP4 files everywhere in the project
+# Env
+venv/
+
+# OS
+.DS_Store
+
+# Data (CRITICAL)
+analysis_results/
+Offload/
+playground_statistics/
+cache/
+features/
+Data/
+raw/
+processed/
+
+# Files
 *.csv
 *.mp4
+*.json
+cache/
+features/
+*.csv
+*.mp4
+
+# ABSOLUTE DATA BLOCK
+Data/
+data/
+raw/
+processed/
+features/
+analysis_results/
+*.mp4
 *.wav
+*.csv
 
-# If you have specific folders for features or videos, ignore them too
-**/features/
-**/videos/
-
-# Ignore Python environment and cache
-venv/
-venv311/
-__pycache__/
-.DS_Store
+# Exceptions (IMPORTANT)
+!src/**/*.json

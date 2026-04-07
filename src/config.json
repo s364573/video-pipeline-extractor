@@ -1,5 +1,6 @@
 {
-  "raw_root": "C:/Users/alepa/Documents/01_MASTER/Data/raw",
-  "output_root": "C:/Users/alepa/Documents/01_MASTER/Data/processed",
-  "ffmpeg": "C:/Users/alepa/AppData/Local/Microsoft/WinGet/Packages/Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe/ffmpeg-8.1-full_build/bin/ffmpeg.exe"
+  "raw_root": "/Users/alexanderpaulsen/01_MASTER/Data/raw",
+  "output_root": "/Users/alexanderpaulsen/01_MASTER/Data/processed",
+  "ffmpeg": "ffmpeg",
+  "venv_feat": "../venv_feat"
 }

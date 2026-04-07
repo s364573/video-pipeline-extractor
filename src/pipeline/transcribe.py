@@ -2,21 +2,25 @@ import subprocess
 import tempfile
 from pathlib import Path
 import json
-import whisper
+from faster_whisper import WhisperModel
 from utils.config_loader import load_config, get_device
-DEVICE = get_device()
 import os
+
 _cfg = load_config()
 FFMPEG = _cfg["ffmpeg"]
+DEVICE = get_device()
 
-# Add ffmpeg directory to PATH so whisper can find it internally
 os.environ["PATH"] = str(Path(FFMPEG).parent) + os.pathsep + os.environ["PATH"]
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-MODEL_SIZE = "medium"   # try "large-v2" if you can
-LANGUAGE = "no"
+# faster-whisper only supports "cpu" and "cuda" (no MPS backend)
+# int8 on CPU is fast and accurate enough
+MODEL_SIZE    = "large-v2"
+LANGUAGE      = "no"
+FW_DEVICE     = "cuda" if DEVICE == "cuda" else "cpu"
+COMPUTE_TYPE  = "float16" if FW_DEVICE == "cuda" else "int8"
 
 NUM_MAP = {
     "en": 1, "ett": 1,
@@ -26,14 +30,11 @@ NUM_MAP = {
     "fem": 5
 }
 
+
 # -----------------------------
 # AUDIO PREPROCESSING
 # -----------------------------
 def preprocess_audio(input_path: Path) -> Path:
-    """
-    Trim silence + normalize audio using ffmpeg.
-    Returns path to processed temp file.
-    """
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp_path = Path(tmp.name)
 
@@ -48,73 +49,69 @@ def preprocess_audio(input_path: Path) -> Path:
         str(tmp_path)
     ]
 
-    result = subprocess.run(
-    cmd,
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.PIPE,
-    text=True
-    )
-    print(f"[DEBUG FFMPEG] returncode={result.returncode}")
-    print(f"[DEBUG TEMP] path={tmp_path}, exists={tmp_path.exists()}, size={tmp_path.stat().st_size if tmp_path.exists() else 0}")
-    return tmp_path
-
-    
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return tmp_path
 
 
 # -----------------------------
 # WHISPER TRANSCRIPTION
 # -----------------------------
-def transcribe_file(model, audio_path: Path):
+def transcribe_file(model: WhisperModel, audio_path: Path):
     processed = preprocess_audio(audio_path)
 
-    result = model.transcribe(
+    segments_gen, info = model.transcribe(
         str(processed),
         language=LANGUAGE,
         task="transcribe",
 
-        # decoding
+        # fast settings — responses are max 6 words
         temperature=0.0,
-        beam_size=10,
-        best_of=10,
+        beam_size=3,
+        best_of=1,
 
-        # critical
         condition_on_previous_text=False,
         max_initial_timestamp=1.0,
 
         # hallucination control
         compression_ratio_threshold=2.0,
-        logprob_threshold=-1.0,
+        log_prob_threshold=-1.0,
         no_speech_threshold=0.3,
 
         initial_prompt="Kort svar på norsk. Ett ord eller kort setning.",
-        fp16 = DEVICE == "cuda" 
     )
 
-    segments = result.get("segments", []) or []
+    # faster-whisper returns a generator — must consume it
+    segments = list(segments_gen)
 
-    # filter segments
     good_segments = [
         s for s in segments
-        if s.get("avg_logprob", -10) > -2.0
-        and s.get("no_speech_prob", 1.0) < 0.6
-        and s.get("compression_ratio", 0) < 2.0
+        if s.avg_logprob > -2.0
+        and s.no_speech_prob < 0.6
+        and s.compression_ratio < 2.0
     ]
 
     if not good_segments:
         good_segments = segments
 
-    text = " ".join(s["text"].strip() for s in good_segments).strip()
-    final_text = good_segments[-1]["text"].strip() if good_segments else ""
-
-    # truncate
+    text = " ".join(s.text.strip() for s in good_segments).strip()
+    final_text = good_segments[-1].text.strip() if good_segments else ""
     final_text = final_text.split(".")[0].strip()
 
     return {
         "text": text,
         "final_text": final_text,
-        "segments": good_segments,
-        "language": result.get("language")
+        "segments": [
+            {
+                "text": s.text,
+                "start": s.start,
+                "end": s.end,
+                "avg_logprob": s.avg_logprob,
+                "no_speech_prob": s.no_speech_prob,
+                "compression_ratio": s.compression_ratio,
+            }
+            for s in good_segments
+        ],
+        "language": info.language,
     }
 
 
@@ -123,16 +120,11 @@ def transcribe_file(model, audio_path: Path):
 # -----------------------------
 def normalize_number(text: str):
     t = text.lower().strip()
-
-    # exact
     if t in NUM_MAP:
         return NUM_MAP[t]
-
-    # fuzzy
     for k in NUM_MAP:
         if k in t:
             return NUM_MAP[k]
-
     return None
 
 
@@ -141,29 +133,22 @@ def is_valid(text: str):
         return False
     if len(text.split()) > 6:
         return False
-
-    # crude loop detection
     if len(text) > 4 and text.count(text[:2]) > 3:
         return False
-
     return True
 
 
 # -----------------------------
 # MAIN PIPELINE
 # -----------------------------
-def transcribe_labels(labels, base_path: Path, model):
+def transcribe_labels(labels, base_path: Path, model: WhisperModel):
     for clip in labels:
         if clip["type"] != "response":
             continue
 
         clip_path = base_path / clip["file"]
         if not clip_path.exists():
-            clip_path = clip_path.with_suffix(".MP4")  # fallback for existing clips
-        if not clip_path.exists():
-            print(f"[WARN] Missing: {clip_path}")
-            continue
-
+            clip_path = clip_path.with_suffix(".MP4")
         if not clip_path.exists():
             print(f"[WARN] Missing: {clip_path}")
             continue
@@ -172,22 +157,14 @@ def transcribe_labels(labels, base_path: Path, model):
 
         try:
             result = transcribe_file(model, clip_path)
-
             final_text = result["final_text"]
-
-            # validation
-            valid = is_valid(final_text)
-
-            number = normalize_number(final_text)
-
             clip["transcription"] = {
                 "text": result["text"],
                 "final_text": final_text,
-                "number": number,
-                "valid": valid,
+                "number": normalize_number(final_text),
+                "valid": is_valid(final_text),
                 "language": result["language"]
             }
-
         except Exception as e:
             print(f"[ERROR] {clip_path}: {e}")
             clip["transcription"] = {"error": str(e)}
@@ -198,9 +175,13 @@ def transcribe_labels(labels, base_path: Path, model):
 # -----------------------------
 # ENTRY
 # -----------------------------
-def main():
-    model = whisper.load_model(MODEL_SIZE, device=DEVICE)
+def load_model() -> WhisperModel:
+    print(f"[ASR] Loading faster-whisper {MODEL_SIZE} ({FW_DEVICE}, {COMPUTE_TYPE})...")
+    return WhisperModel(MODEL_SIZE, device=FW_DEVICE, compute_type=COMPUTE_TYPE)
 
+
+def main():
+    model = load_model()
     base_path = Path("PATH_TO_CLIPS")
 
     with open("labels.json") as f:
